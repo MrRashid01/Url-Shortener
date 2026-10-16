@@ -4,10 +4,12 @@ import { prisma } from "../lib/prisma";
 import { generateCode } from "../utils/generateCode";
 import { isValidHttpUrl } from "../utils/validateUrl";
 
+import { optionalAuth } from "../middleware/auth";
+
 const router = Router();
 
 // POST /api/urls: create a short URL
-router.post("/", async (req, res) => {
+router.post("/", optionalAuth, async (req, res) => {
   const originalUrl =
     typeof req.body?.originalUrl === "string" ? req.body.originalUrl.trim() : "";
 
@@ -20,9 +22,13 @@ router.post("/", async (req, res) => {
   // Try up to 5 times in case of a (very rare) code collision
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const doc = await prisma.url.create({
-        data: { originalUrl, shortCode: generateCode() },
-      });
+        const doc = await prisma.url.create({
+            data: {
+            originalUrl,
+            shortCode: generateCode(),
+            userId: res.locals.userId ?? null,
+            },
+        });
       return res.status(201).json({
         originalUrl: doc.originalUrl,
         shortCode: doc.shortCode,

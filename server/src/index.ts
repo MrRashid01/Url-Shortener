@@ -3,16 +3,18 @@ import express from "express";
 import cors from "cors";
 import urlRoutes from "./routes/urlRoutes";
 import { prisma } from "./lib/prisma";
+import cookieParser from "cookie-parser";
+import authRoutes from "./routes/authRoutes";
 
 const app = express();
 
-app.use(cors({ origin: process.env.CLIENT_URL }));
+app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 
-// Health check (we'll use this with Docker and deployment later)
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
-// API routes FIRST
+app.use("/api/auth", authRoutes);
 app.use("/api/urls", urlRoutes);
 
 // Redirect route LAST (it matches any single-segment path)
@@ -27,6 +29,8 @@ app.get("/:shortCode", async (req, res) => {
 
   res.redirect(302, url.originalUrl);
 });
+
+if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not set");
 
 async function start() {
   await prisma.$connect();
