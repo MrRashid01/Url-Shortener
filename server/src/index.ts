@@ -27,6 +27,11 @@ app.get("/:shortCode", async (req, res) => {
     return res.status(404).send("Short link not found");
   }
 
+  // Fire-and-forget: don't make the visitor wait for the counter update
+  prisma.url
+    .update({ where: { id: url.id }, data: { clicks: { increment: 1 } } })
+    .catch((err) => console.error("Click count failed:", err));
+
   res.redirect(302, url.originalUrl);
 });
 
