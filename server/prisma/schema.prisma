@@ -28,4 +28,19 @@ model Url {
 
   @@index([userId])
   @@index([expiresAt])
+
+  clickEvents Click[]
+}
+
+model Click {
+  id        Int      @id @default(autoincrement())
+  urlId     Int
+  url       Url      @relation(fields: [urlId], references: [id], onDelete: Cascade)
+  clickedAt DateTime @default(now())
+  referrer  String   @default("Direct")
+  browser   String   @default("Unknown")
+  os        String   @default("Unknown")
+  device    String   @default("desktop")
+
+  @@index([urlId, clickedAt])
 }

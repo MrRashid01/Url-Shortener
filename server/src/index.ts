@@ -6,6 +6,7 @@ import { prisma } from "./lib/prisma";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes";
 import { startCleanupJob } from "./jobs/cleanupExpired";
+import { recordClick, looksLikeBot } from "./utils/analytics";
 
 const app = express();
 
@@ -28,14 +29,14 @@ app.get("/:shortCode", async (req, res) => {
     return res.status(404).send("Short link not found");
   }
 
-  // Lazy expiration check: this is the real enforcement
   if (url.expiresAt && url.expiresAt.getTime() <= Date.now()) {
     return res.status(410).send("This link has expired");
   }
 
-  prisma.url
-    .update({ where: { id: url.id }, data: { clicks: { increment: 1 } } })
-    .catch((err) => console.error("Click count failed:", err));
+  const userAgent = req.get("user-agent") ?? "";
+  if (req.method !== "HEAD" && !looksLikeBot(userAgent)) {
+    recordClick(url.id, userAgent, req.get("referer"));
+  }
 
   res.redirect(302, url.originalUrl);
 });

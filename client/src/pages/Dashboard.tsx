@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../AuthContext";
 import { api } from "../api";
+import {Link} from "react-router-dom";
 
 type UrlItem = {
   id: number;
@@ -217,6 +218,7 @@ export default function Dashboard() {
                   )}
                 </td>
                 <td style={{ whiteSpace: "nowrap" }}>
+                  <Link to={`/dashboard/${item.id}`}>Stats</Link>{" "}
                   <button onClick={() => handleCopy(item)}>
                     {copiedId === item.id ? "Copied!" : "Copy"}
                   </button>{" "}

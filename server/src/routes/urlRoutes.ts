@@ -168,4 +168,82 @@ router.delete("/:id", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+type Dimension = "referrer" | "browser" | "os" | "device";
+
+async function breakdown(urlId: number, since: Date, dim: Dimension) {
+  // dim is one of four fixed strings from our code, never user input
+  const col = Prisma.raw(`"${dim}"`);
+  return prisma.$queryRaw<{ name: string; count: number }[]>`
+    SELECT ${col} AS name, COUNT(*)::int AS "count"
+    FROM "Click"
+    WHERE "urlId" = ${urlId} AND "clickedAt" >= ${since}
+    GROUP BY ${col}
+    ORDER BY "count" DESC
+    LIMIT 10`;
+}
+
+// GET /api/urls/:id/stats?days=30
+router.get("/:id/stats", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: "Invalid id" });
+  }
+
+  // Ownership check: only the owner can see analytics
+  const url = await prisma.url.findFirst({
+    where: { id, userId: res.locals.userId },
+  });
+  if (!url) {
+    return res.status(404).json({ error: "URL not found" });
+  }
+
+  const requested = parseInt(String(req.query.days));
+  const days = [7, 30, 90].includes(requested) ? requested : 30;
+
+  // Start of the day (UTC), `days - 1` days ago
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+  since.setUTCDate(since.getUTCDate() - (days - 1));
+
+  const [dailyRows, referrers, browsers, os, devices, recent] = await Promise.all([
+    prisma.$queryRaw<{ day: string; count: number }[]>`
+      SELECT to_char("clickedAt", 'YYYY-MM-DD') AS day, COUNT(*)::int AS "count"
+      FROM "Click"
+      WHERE "urlId" = ${id} AND "clickedAt" >= ${since}
+      GROUP BY 1
+      ORDER BY 1`,
+    breakdown(id, since, "referrer"),
+    breakdown(id, since, "browser"),
+    breakdown(id, since, "os"),
+    breakdown(id, since, "device"),
+    prisma.click.findMany({
+      where: { urlId: id },
+      orderBy: { clickedAt: "desc" },
+      take: 10,
+    }),
+  ]);
+
+  // Fill in days with zero clicks so the chart has no gaps
+  const counts = new Map(dailyRows.map((r) => [r.day, r.count]));
+  const daily = Array.from({ length: days }, (_, i) => {
+    const d = new Date(since);
+    d.setUTCDate(since.getUTCDate() + i);
+    const date = d.toISOString().slice(0, 10);
+    return { date, clicks: counts.get(date) ?? 0 };
+  });
+
+  res.json({
+    url: toDto(url),
+    days,
+    totalClicks: url.clicks,
+    periodClicks: daily.reduce((sum, d) => sum + d.clicks, 0),
+    daily,
+    referrers,
+    browsers,
+    os,
+    devices,
+    recent,
+  });
+});
+
 export default router;
