@@ -5,6 +5,9 @@ import { generateCode } from "../utils/generateCode";
 import { isValidHttpUrl } from "../utils/validateUrl";
 import { normalizeAlias, validateAlias } from "../utils/alias";
 import { optionalAuth, requireAuth } from "../middleware/auth";
+import { invalidateUrl } from "../lib/urlCache";
+import { parseBody, createUrlSchema } from "../schemas";
+
 
 const router = Router();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -34,24 +37,19 @@ function isUniqueViolation(err: unknown): boolean {
 
 // POST /api/urls
 router.post("/", optionalAuth, async (req, res) => {
-  const originalUrl =
-    typeof req.body?.originalUrl === "string" ? req.body.originalUrl.trim() : "";
-
-  if (!isValidHttpUrl(originalUrl)) {
-    return res
-      .status(400)
-      .json({ error: "Please enter a valid URL starting with http:// or https://" });
-  }
+  const data = parseBody(createUrlSchema, req.body, res);
+  if (!data) return;
+  const { originalUrl } = data;
 
   const userId: number | null = res.locals.userId ?? null;
 
   // ---- Optional expiration ----
   let expiresAt: Date | null = null;
-  if (req.body?.expiresAt) {
-    const parsed = typeof req.body.expiresAt === "string" ? new Date(req.body.expiresAt) : null;
+  if (data.expiresAt) {
+    const parsed = new Date(data.expiresAt);
     const now = Date.now();
 
-    if (!parsed || isNaN(parsed.getTime()) || parsed.getTime() <= now + 60_000) {
+    if (isNaN(parsed.getTime()) || parsed.getTime() <= now + 60_000) {
       return res.status(400).json({ error: "Expiration must be a date in the future" });
     }
     if (parsed.getTime() > now + 365 * DAY_MS) {
@@ -61,13 +59,12 @@ router.post("/", optionalAuth, async (req, res) => {
   }
 
   // ---- Custom alias: reject on collision ----
-  const rawAlias = typeof req.body?.alias === "string" ? req.body.alias : "";
-  if (rawAlias.trim()) {
+  if (data.alias) {
     if (userId === null) {
       return res.status(401).json({ error: "Please log in to use a custom alias" });
     }
 
-    const alias = normalizeAlias(rawAlias);
+    const alias = normalizeAlias(data.alias);
     const problem = validateAlias(alias);
     if (problem) {
       return res.status(400).json({ error: problem });
@@ -77,6 +74,7 @@ router.post("/", optionalAuth, async (req, res) => {
       const doc = await prisma.url.create({
         data: { originalUrl, shortCode: alias, userId, expiresAt },
       });
+      await invalidateUrl(doc.shortCode);
       return res.status(201).json(toDto(doc));
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -92,6 +90,7 @@ router.post("/", optionalAuth, async (req, res) => {
       const doc = await prisma.url.create({
         data: { originalUrl, shortCode: generateCode(), userId, expiresAt },
       });
+      await invalidateUrl(doc.shortCode);
       return res.status(201).json(toDto(doc));
     } catch (err) {
       if (isUniqueViolation(err)) continue;
@@ -157,13 +156,17 @@ router.delete("/:id", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Invalid id" });
   }
 
-  const result = await prisma.url.deleteMany({
+  // Find it (only if it's mine) so we know its code
+  const url = await prisma.url.findFirst({
     where: { id, userId: res.locals.userId },
+    select: { shortCode: true },
   });
-
-  if (result.count === 0) {
+  if (!url) {
     return res.status(404).json({ error: "URL not found" });
   }
+
+  await prisma.url.deleteMany({ where: { id, userId: res.locals.userId } });
+  await invalidateUrl(url.shortCode); // throw away the note
 
   res.json({ ok: true });
 });

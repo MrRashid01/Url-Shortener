@@ -5,26 +5,17 @@ import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { signToken, setAuthCookie, clearAuthCookie } from "../utils/auth";
 
-const router = Router();
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { parseBody, registerSchema, loginSchema } from "../schemas";
+// Computed once at startup. Used so unknown emails take the same time as known ones.
+const DUMMY_HASH = bcrypt.hashSync("not-a-real-password", 12);
 
-function readCredentials(body: any) {
-  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-  const password = typeof body?.password === "string" ? body.password : "";
-  return { email, password };
-}
+const router = Router();
 
 // POST /api/auth/register
 router.post("/register", async (req, res) => {
-  const { email, password } = readCredentials(req.body);
-
-  if (!EMAIL_RE.test(email)) {
-    return res.status(400).json({ error: "Please enter a valid email" });
-  }
-  // bcrypt only uses the first 72 bytes, so we cap the length
-  if (password.length < 8 || password.length > 72) {
-    return res.status(400).json({ error: "Password must be 8 to 72 characters" });
-  }
+  const data = parseBody(registerSchema, req.body, res);
+  if (!data) return;
+  const { email, password } = data;
 
   const passwordHash = await bcrypt.hash(password, 12);
 
@@ -42,13 +33,17 @@ router.post("/register", async (req, res) => {
 
 // POST /api/auth/login
 router.post("/login", async (req, res) => {
-  const { email, password } = readCredentials(req.body);
+  const data = parseBody(loginSchema, req.body, res);
+  if (!data) return;
+  const { email, password } = data;
 
   const user = await prisma.user.findUnique({ where: { email } });
-  const passwordOk = user ? await bcrypt.compare(password, user.passwordHash) : false;
 
-  // Same message for "no such email" and "wrong password" so attackers
-  // can't discover which emails are registered
+  // Always run bcrypt, even when the email doesn't exist.
+  // Otherwise "unknown email" answers faster, and attackers can use
+  // that time difference to find out which emails are registered.
+  const passwordOk = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
+
   if (!user || !passwordOk) {
     return res.status(401).json({ error: "Invalid email or password" });
   }
