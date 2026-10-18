@@ -31,6 +31,11 @@ export default function Dashboard() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [newUrl, setNewUrl] = useState("");
+  const [alias, setAlias] = useState("");
+  const [expiresDate, setExpiresDate] = useState("");
+  const [status, setStatus] = useState<"all" | "active" | "expired">("all");
+
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -48,6 +53,7 @@ export default function Dashboard() {
     try {
       const params = new URLSearchParams({ page: String(page) });
       if (debouncedSearch) params.set("search", debouncedSearch);
+      if (status !== "all") params.set("status", status);
 
       const data = await api<ListResponse>(`/api/urls?${params}`);
 
@@ -62,7 +68,7 @@ export default function Dashboard() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     }
-  }, [page, debouncedSearch]);
+  }, [page, debouncedSearch, status]);
 
   useEffect(() => {
     load();
@@ -75,9 +81,17 @@ export default function Dashboard() {
     try {
       await api("/api/urls", {
         method: "POST",
-        body: JSON.stringify({ originalUrl: newUrl }),
+        body: JSON.stringify({
+          originalUrl: newUrl,
+          alias: alias || undefined,
+          expiresAt: expiresDate
+            ? new Date(`${expiresDate}T23:59:59`).toISOString()
+            : undefined,
+        }),
       });
       setNewUrl("");
+      setAlias("");
+      setExpiresDate("");
       setSearch("");
       setDebouncedSearch("");
       setPage(1);
@@ -112,28 +126,61 @@ export default function Dashboard() {
       <h2>Dashboard</h2>
       <p style={{ color: "#666" }}>Logged in as {user?.email}</p>
 
-      <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+      <form onSubmit={handleCreate} style={{ display: "grid", gap: 8, marginBottom: 24 }}>
         <input
           type="text"
           placeholder="Paste a long URL (https://...)"
           value={newUrl}
           onChange={(e) => setNewUrl(e.target.value)}
-          style={{ flex: 1, padding: 10 }}
+          style={{ padding: 10 }}
         />
-        <button type="submit" disabled={creating} style={{ padding: "10px 16px" }}>
-          {creating ? "Creating..." : "Create"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="text"
+            placeholder="Custom alias (optional)"
+            value={alias}
+            onChange={(e) => setAlias(e.target.value)}
+            style={{ padding: 10, flex: 1, minWidth: 160 }}
+          />
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            Expires
+            <input
+              type="date"
+              min={tomorrow}
+              value={expiresDate}
+              onChange={(e) => setExpiresDate(e.target.value)}
+              style={{ padding: 8 }}
+            />
+          </label>
+          <button type="submit" disabled={creating} style={{ padding: "10px 16px" }}>
+            {creating ? "Creating..." : "Create"}
+          </button>
+        </div>
       </form>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 
-      <input
-        type="search"
-        placeholder="Search your links..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ width: "100%", padding: 10, marginBottom: 12, boxSizing: "border-box" }}
-      />
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <input
+          type="search"
+          placeholder="Search your links..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1, padding: 10 }}
+        />
+        <select
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value as "all" | "active" | "expired");
+            setPage(1);
+          }}
+          style={{ padding: 10 }}
+        >
+          <option value="all">All</option>
+          <option value="active">Active</option>
+          <option value="expired">Expired</option>
+        </select>
+      </div>
 
       <p style={{ color: "#666" }}>{total} link{total === 1 ? "" : "s"}</p>
 
@@ -163,7 +210,12 @@ export default function Dashboard() {
                 </td>
                 <td>{item.clicks}</td>
                 <td>{fmt(item.createdAt)}</td>
-                <td>{item.expiresAt ? fmt(item.expiresAt) : "Never"}</td>
+                <td>
+                  {item.expiresAt ? fmt(item.expiresAt) : "Never"}
+                  {item.expiresAt && new Date(item.expiresAt) <= new Date() && (
+                    <span style={{ color: "crimson", marginLeft: 6 }}>Expired</span>
+                  )}
+                </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   <button onClick={() => handleCopy(item)}>
                     {copiedId === item.id ? "Copied!" : "Copy"}

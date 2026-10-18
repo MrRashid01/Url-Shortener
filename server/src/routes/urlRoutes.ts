@@ -3,11 +3,12 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { generateCode } from "../utils/generateCode";
 import { isValidHttpUrl } from "../utils/validateUrl";
+import { normalizeAlias, validateAlias } from "../utils/alias";
 import { optionalAuth, requireAuth } from "../middleware/auth";
 
 const router = Router();
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Shape we send to the frontend
 function toDto(u: {
   id: number;
   originalUrl: string;
@@ -27,7 +28,11 @@ function toDto(u: {
   };
 }
 
-// POST /api/urls: create (works for anonymous and logged-in users)
+function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
+}
+
+// POST /api/urls
 router.post("/", optionalAuth, async (req, res) => {
   const originalUrl =
     typeof req.body?.originalUrl === "string" ? req.body.originalUrl.trim() : "";
@@ -38,20 +43,58 @@ router.post("/", optionalAuth, async (req, res) => {
       .json({ error: "Please enter a valid URL starting with http:// or https://" });
   }
 
-  for (let attempt = 0; attempt < 5; attempt++) {
+  const userId: number | null = res.locals.userId ?? null;
+
+  // ---- Optional expiration ----
+  let expiresAt: Date | null = null;
+  if (req.body?.expiresAt) {
+    const parsed = typeof req.body.expiresAt === "string" ? new Date(req.body.expiresAt) : null;
+    const now = Date.now();
+
+    if (!parsed || isNaN(parsed.getTime()) || parsed.getTime() <= now + 60_000) {
+      return res.status(400).json({ error: "Expiration must be a date in the future" });
+    }
+    if (parsed.getTime() > now + 365 * DAY_MS) {
+      return res.status(400).json({ error: "Expiration can be at most 1 year away" });
+    }
+    expiresAt = parsed;
+  }
+
+  // ---- Custom alias: reject on collision ----
+  const rawAlias = typeof req.body?.alias === "string" ? req.body.alias : "";
+  if (rawAlias.trim()) {
+    if (userId === null) {
+      return res.status(401).json({ error: "Please log in to use a custom alias" });
+    }
+
+    const alias = normalizeAlias(rawAlias);
+    const problem = validateAlias(alias);
+    if (problem) {
+      return res.status(400).json({ error: problem });
+    }
+
     try {
       const doc = await prisma.url.create({
-        data: {
-          originalUrl,
-          shortCode: generateCode(),
-          userId: res.locals.userId ?? null,
-        },
+        data: { originalUrl, shortCode: alias, userId, expiresAt },
       });
       return res.status(201).json(toDto(doc));
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-        continue;
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({ error: "That alias is already taken" });
       }
+      throw err;
+    }
+  }
+
+  // ---- Random code: retry on collision ----
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const doc = await prisma.url.create({
+        data: { originalUrl, shortCode: generateCode(), userId, expiresAt },
+      });
+      return res.status(201).json(toDto(doc));
+    } catch (err) {
+      if (isUniqueViolation(err)) continue;
       throw err;
     }
   }
@@ -59,7 +102,7 @@ router.post("/", optionalAuth, async (req, res) => {
   res.status(500).json({ error: "Could not generate a unique code. Try again." });
 });
 
-// GET /api/urls?search=&page=&limit=: list MY urls
+// GET /api/urls?search=&status=&page=&limit=
 router.get("/", requireAuth, async (req, res) => {
   const userId: number = res.locals.userId;
 
@@ -67,16 +110,27 @@ router.get("/", requireAuth, async (req, res) => {
   const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit)) || 10));
   const search =
     typeof req.query.search === "string" ? req.query.search.trim().slice(0, 100) : "";
+  const status =
+    req.query.status === "active" || req.query.status === "expired" ? req.query.status : "all";
 
-  const where: Prisma.UrlWhereInput = {
-    userId, // ownership is part of the query
-    ...(search && {
+  const now = new Date();
+  const and: Prisma.UrlWhereInput[] = [];
+
+  if (search) {
+    and.push({
       OR: [
         { originalUrl: { contains: search, mode: "insensitive" } },
         { shortCode: { contains: search, mode: "insensitive" } },
       ],
-    }),
-  };
+    });
+  }
+  if (status === "active") {
+    and.push({ OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] });
+  } else if (status === "expired") {
+    and.push({ expiresAt: { lte: now } });
+  }
+
+  const where: Prisma.UrlWhereInput = { userId, ...(and.length > 0 ? { AND: and } : {}) };
 
   const [items, total] = await Promise.all([
     prisma.url.findMany({
@@ -96,20 +150,17 @@ router.get("/", requireAuth, async (req, res) => {
   });
 });
 
-// DELETE /api/urls/:id: delete one of MY urls
+// DELETE /api/urls/:id
 router.delete("/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     return res.status(400).json({ error: "Invalid id" });
   }
 
-  // id AND userId in one query → you can only ever delete your own
   const result = await prisma.url.deleteMany({
     where: { id, userId: res.locals.userId },
   });
 
-  // Same 404 whether it doesn't exist or belongs to someone else,
-  // so attackers can't probe which ids exist
   if (result.count === 0) {
     return res.status(404).json({ error: "URL not found" });
   }

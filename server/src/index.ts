@@ -5,6 +5,7 @@ import urlRoutes from "./routes/urlRoutes";
 import { prisma } from "./lib/prisma";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes";
+import { startCleanupJob } from "./jobs/cleanupExpired";
 
 const app = express();
 
@@ -27,7 +28,11 @@ app.get("/:shortCode", async (req, res) => {
     return res.status(404).send("Short link not found");
   }
 
-  // Fire-and-forget: don't make the visitor wait for the counter update
+  // Lazy expiration check: this is the real enforcement
+  if (url.expiresAt && url.expiresAt.getTime() <= Date.now()) {
+    return res.status(410).send("This link has expired");
+  }
+
   prisma.url
     .update({ where: { id: url.id }, data: { clicks: { increment: 1 } } })
     .catch((err) => console.error("Click count failed:", err));
@@ -43,6 +48,7 @@ async function start() {
 
   const port = process.env.PORT || 5000;
   app.listen(port, () => console.log(`Server running on port ${port}`));
+  startCleanupJob();
 }
 
 start().catch((err) => {
