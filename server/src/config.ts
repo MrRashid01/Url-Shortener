@@ -9,6 +9,7 @@ const schema = z.object({
   BASE_URL: z.string().min(1, "BASE_URL is required"),
   CLIENT_URL: z.string().min(1, "CLIENT_URL is required"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
+  CROSS_SITE_COOKIES: z.enum(["true", "false"]).default("false"),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -14,10 +14,13 @@ export function signToken(userId: number): string {
   return jwt.sign({ userId }, getJwtSecret(), { expiresIn: "7d" });
 }
 
+// true only when frontend and backend are on different websites (see Part B)
+const crossSite = process.env.CROSS_SITE_COOKIES === "true";
+
 const cookieOptions = {
-  httpOnly: true, // JavaScript can't read it
-  secure: process.env.NODE_ENV === "production", // HTTPS only in production
-  sameSite: "lax" as const, // blocks most CSRF
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: (crossSite ? "none" : "lax") as "none" | "lax",
 };
 
 export function setAuthCookie(res: Response, token: string) {
