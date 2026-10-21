@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Scissors } from "lucide-react";
 import { useAuth } from "../AuthContext";
 
 export default function AuthPage({ mode }: { mode: "login" | "register" }) {
@@ -28,37 +29,74 @@ export default function AuthPage({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <div style={{ maxWidth: 360, margin: "60px auto" }}>
-      <h2>{isLogin ? "Log in" : "Create account"}</h2>
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 10 }}>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{ padding: 10 }}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password (min 8 characters)"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ padding: 10 }}
-          required
-        />
-        <button type="submit" disabled={loading} style={{ padding: 10 }}>
-          {loading ? "Please wait..." : isLogin ? "Log in" : "Sign up"}
-        </button>
-      </form>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-      <p>
-        {isLogin ? (
-          <>No account? <Link to="/register">Sign up</Link></>
-        ) : (
-          <>Already registered? <Link to="/login">Log in</Link></>
-        )}
-      </p>
+    <div className="mx-auto mt-6 max-w-md sm:mt-12">
+      <div className="card p-8">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-4 grid size-12 place-items-center rounded-2xl bg-linear-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/30">
+            <Scissors className="size-6" />
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {isLogin ? "Welcome back" : "Create your account"}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {isLogin
+              ? "Log in to manage your links and see analytics."
+              : "Free, and it takes a few seconds."}
+          </p>
+        </div>
+
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          <div>
+            <label className="label" htmlFor="email">Email</label>
+            <input
+              id="email"
+              className="input"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="password">Password</label>
+            <input
+              id="password"
+              className="input"
+              type="password"
+              autoComplete={isLogin ? "current-password" : "new-password"}
+              placeholder={isLogin ? "" : "At least 8 characters"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+
+          {error && <div className="alert-error">{error}</div>}
+
+          <button className="btn btn-primary w-full py-3" type="submit" disabled={loading}>
+            {loading ? "Please wait..." : isLogin ? "Log in" : "Create account"}
+          </button>
+        </form>
+
+        <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+          {isLogin ? (
+            <>
+              No account?{" "}
+              <Link to="/register" className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                Sign up
+              </Link>
+            </>
+          ) : (
+            <>
+              Already registered?{" "}
+              <Link to="/login" className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                Log in
+              </Link>
+            </>
+          )}
+        </p>
+      </div>
     </div>
   );
 }
