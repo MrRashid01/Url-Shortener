@@ -1,9 +1,9 @@
 import { redis } from "./redis";
 import { prisma } from "./prisma";
 
-const ENABLED = process.env.CACHE_ENABLED !== "false"; // switch for benchmarking
-const MAX_TTL_SECONDS = 60 * 60; // keep a note for 1 hour
-const NOT_FOUND_TTL_SECONDS = 60; // remember "doesn't exist" for 1 minute
+const ENABLED = process.env.CACHE_ENABLED !== "false";
+const MAX_TTL_SECONDS = 60 * 60;
+const NOT_FOUND_TTL_SECONDS = 60;
 const NOT_FOUND = "none";
 
 export type CachedUrl = {
@@ -14,10 +14,32 @@ export type CachedUrl = {
 
 const keyFor = (code: string) => `url:${code}`;
 
+// Never keep a note longer than the link itself lives
+function ttlFor(url: CachedUrl): number {
+  let ttl = MAX_TTL_SECONDS;
+  if (url.expiresAt) {
+    const secondsLeft = Math.floor((new Date(url.expiresAt).getTime() - Date.now()) / 1000);
+    ttl = Math.min(ttl, secondsLeft);
+  }
+  return ttl;
+}
+
+// Write a note into Redis (used on first read AND right after a link is created)
+export async function cacheUrl(code: string, url: CachedUrl) {
+  if (!ENABLED) return;
+  try {
+    const ttl = ttlFor(url);
+    if (ttl > 0) {
+      await redis.set(keyFor(code), JSON.stringify(url), "EX", ttl);
+    }
+  } catch (err) {
+    console.error("Cache write failed:", err);
+  }
+}
+
 export async function getUrlByCode(
   code: string
 ): Promise<{ url: CachedUrl | null; source: "cache" | "db" }> {
-  // 1. Try Redis first
   if (ENABLED) {
     try {
       const cached = await redis.get(keyFor(code));
@@ -28,7 +50,6 @@ export async function getUrlByCode(
     }
   }
 
-  // 2. Cache miss: ask Postgres
   const row = await prisma.url.findUnique({
     where: { shortCode: code },
     select: { id: true, originalUrl: true, expiresAt: true },
@@ -38,22 +59,11 @@ export async function getUrlByCode(
     ? { id: row.id, originalUrl: row.originalUrl, expiresAt: row.expiresAt?.toISOString() ?? null }
     : null;
 
-  // 3. Save a note in Redis for next time
-  if (ENABLED) {
+  if (url) {
+    await cacheUrl(code, url);
+  } else if (ENABLED) {
     try {
-      if (!url) {
-        await redis.set(keyFor(code), NOT_FOUND, "EX", NOT_FOUND_TTL_SECONDS);
-      } else {
-        let ttl = MAX_TTL_SECONDS;
-        if (url.expiresAt) {
-          // Never keep a note longer than the link itself lives
-          const secondsLeft = Math.floor((new Date(url.expiresAt).getTime() - Date.now()) / 1000);
-          ttl = Math.min(ttl, secondsLeft);
-        }
-        if (ttl > 0) {
-          await redis.set(keyFor(code), JSON.stringify(url), "EX", ttl);
-        }
-      }
+      await redis.set(keyFor(code), NOT_FOUND, "EX", NOT_FOUND_TTL_SECONDS);
     } catch (err) {
       console.error("Cache write failed:", err);
     }
@@ -62,7 +72,6 @@ export async function getUrlByCode(
   return { url, source: "db" };
 }
 
-// Throw the note away because the real data changed
 export async function invalidateUrl(code: string) {
   try {
     await redis.del(keyFor(code));

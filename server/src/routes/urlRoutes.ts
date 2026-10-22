@@ -5,12 +5,18 @@ import { generateCode } from "../utils/generateCode";
 import { isValidHttpUrl } from "../utils/validateUrl";
 import { normalizeAlias, validateAlias } from "../utils/alias";
 import { optionalAuth, requireAuth } from "../middleware/auth";
-import { invalidateUrl } from "../lib/urlCache";
 import { parseBody, createUrlSchema } from "../schemas";
+import { cacheUrl, invalidateUrl } from "../lib/urlCache";
 
 
 const router = Router();
 const DAY_MS = 24 * 60 * 60 * 1000;
+const warmCache = (doc: { id: number; shortCode: string; originalUrl: string; expiresAt: Date | null }) =>
+  cacheUrl(doc.shortCode, {
+    id: doc.id,
+    originalUrl: doc.originalUrl,
+    expiresAt: doc.expiresAt?.toISOString() ?? null,
+  });
 
 function toDto(u: {
   id: number;
@@ -74,7 +80,7 @@ router.post("/", optionalAuth, async (req, res) => {
       const doc = await prisma.url.create({
         data: { originalUrl, shortCode: alias, userId, expiresAt },
       });
-      await invalidateUrl(doc.shortCode);
+      await warmCache(doc);
       return res.status(201).json(toDto(doc));
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -90,7 +96,7 @@ router.post("/", optionalAuth, async (req, res) => {
       const doc = await prisma.url.create({
         data: { originalUrl, shortCode: generateCode(), userId, expiresAt },
       });
-      await invalidateUrl(doc.shortCode);
+      await warmCache(doc);
       return res.status(201).json(toDto(doc));
     } catch (err) {
       if (isUniqueViolation(err)) continue;
