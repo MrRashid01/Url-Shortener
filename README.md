@@ -7,9 +7,6 @@ A full-stack URL shortener (like Bitly or TinyURL) built to learn real-world sys
 
 > The backend runs on a free tier, so the first request after a quiet period can take about a minute to wake up.
 
-![Home page](docs/home.png)
-![Dashboard](docs/dashboard.png)
-![Analytics](docs/analytics.png)
 
 ## Features
 
@@ -78,7 +75,7 @@ More notes on scaling (load balancing, replicas, sharding, CDN, CAP) are in the 
 Requirements: Node 20+, Docker Desktop.
 
 ```bash
-git clone https://github.com/<MrRashid01>/url-shortener.git
+git clone https://github.com/MrRashid01/url-shortener.git
 cd url-shortener
 
 # 1. Start Postgres and Redis
@@ -223,4 +220,4 @@ Frontend on Vercel, API (Docker) on Render, Postgres on Neon, Redis on Redis Clo
 
 ## Author
 
-**Rashid Khan**: [GitHub](https://github.com/<MrRashid01>) 
+**Rashid Khan**: [GitHub](https://github.com/MrRashid01) 
