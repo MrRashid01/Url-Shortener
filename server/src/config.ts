@@ -16,6 +16,7 @@ const schema = z.object({
     .default(302),
   REDIRECT_BROWSER_CACHE_SECONDS: z.coerce.number().int().min(0).default(0),
   REDIRECT_CDN_CACHE_SECONDS: z.coerce.number().int().min(0).default(0),
+  METRICS_TOKEN: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);

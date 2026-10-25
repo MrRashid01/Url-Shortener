@@ -14,6 +14,8 @@ import { recordClick, looksLikeBot } from "./utils/analytics";
 import { startCleanupJob } from "./jobs/cleanupExpired";
 import { rateLimit } from "./middleware/rateLimit";
 import { startClickPipeline, shutdownClickPipeline } from "./lib/clickQueue";
+import { redis, waitForRedis } from "./lib/redis";
+import { httpDuration, redirects, metricsText, metricsContentType } from "./lib/metrics";
 
 const app = express();
 
@@ -24,7 +26,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 app.use(helmet());
-app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === "/health" } }));
+app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => ["/health", "/ready", "/metrics"].includes(req.url ?? "") } }));
 
 // CORS: only our own frontend(s) may call the API from a browser.
 // CLIENT_URL can hold several origins separated by commas.
@@ -37,12 +39,48 @@ app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json({ limit: "10kb" })); // reject huge request bodies
 app.use(cookieParser());
 
+app.use((req, res, next) => {
+  const stop = httpDuration.startTimer();
+  res.on("finish", () => {
+    // Use the route pattern, NOT the real path. Every short code is different,
+    // and thousands of labels would overload the metrics system.
+    stop({ method: req.method, route: req.route?.path ?? "unmatched", status: String(res.statusCode) });
+  });
+  next();
+});
+
 app.use("/api", (_req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
 });
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+let shuttingDown = false;
+
+app.get("/ready", async (_req, res) => {
+  if (shuttingDown) return res.status(503).json({ status: "shutting_down" });
+
+  const check = async (fn: () => Promise<unknown>) => {
+    try {
+      await Promise.race([
+        fn(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500)),
+      ]);
+      return "up";
+    } catch {
+      return "down";
+    }
+  };
+
+  const [db, cache] = await Promise.all([
+    check(() => prisma.$queryRaw`SELECT 1`),
+    check(() => redis.ping()),
+  ]);
+
+  const ready = db === "up" || cache === "up"; // one broken part = degraded, still serving
+  const status = db === "up" && cache === "up" ? "ok" : ready ? "degraded" : "down";
+  res.status(ready ? 200 : 503).json({ status, db, cache });
+});
 
 // ---- Rate limits ----
 app.use("/api", rateLimit({ name: "api", windowSeconds: 60, max: 100 }));
@@ -80,6 +118,14 @@ function redirectCacheControl(expiresAt: string | null): string | null {
   return parts.join(", ");
 }
 
+app.get("/metrics", async (req, res) => {
+  if (env.METRICS_TOKEN && req.get("authorization") !== `Bearer ${env.METRICS_TOKEN}`) {
+    return res.status(401).send("Unauthorized");
+  }
+  res.set("Content-Type", metricsContentType);
+  res.send(await metricsText());
+});
+
 // ---- Redirect (must come after the API routes) ----
 app.get("/:shortCode", async (req, res) => {
   const { url, source } = await getUrlByCode(req.params.shortCode);
@@ -87,11 +133,13 @@ app.get("/:shortCode", async (req, res) => {
   res.set("X-Cache", source === "cache" ? "HIT" : "MISS"); // this is OUR Redis cache
 
   if (!url) {
+    redirects.inc({ result: "not_found", cache: source });
     res.set("Cache-Control", "no-store"); // never let anyone remember "not found"
     return res.status(404).send("Short link not found");
   }
 
   if (url.expiresAt && new Date(url.expiresAt).getTime() <= Date.now()) {
+    redirects.inc({ result: "expired", cache: source });
     res.set("Cache-Control", "no-store");
     return res.status(410).send("This link has expired");
   }
@@ -104,6 +152,7 @@ app.get("/:shortCode", async (req, res) => {
   const cacheControl = redirectCacheControl(url.expiresAt);
   if (cacheControl) res.set("Cache-Control", cacheControl);
 
+  redirects.inc({ result: "redirect", cache: source });
   res.redirect(env.REDIRECT_STATUS, url.originalUrl);
 });
 
@@ -127,6 +176,9 @@ async function start() {
   await prisma.$connect();
   logger.info("Postgres connected");
 
+  // The app also works without Redis, so don't crash if it isn't there
+  await waitForRedis().catch(() => logger.warn("Redis not ready, starting in degraded mode"));
+
   await startClickPipeline();
 
   const port = Number(process.env.PORT) || 5000;
@@ -134,10 +186,13 @@ async function start() {
   startCleanupJob();
 }
 
+
 async function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down");
-  server?.close(); // stop taking new requests
-  await shutdownClickPipeline(); // save clicks that are still waiting
+  shuttingDown = true;                            // /ready now says 503
+  await new Promise((r) => setTimeout(r, 5000));  // let the load balancer notice
+  server?.close();                                // stop taking new requests
+  await shutdownClickPipeline();                  // save waiting clicks
   await prisma.$disconnect();
   process.exit(0);
 }
