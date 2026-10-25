@@ -26,7 +26,7 @@ type Stats = {
   browsers: Row[];
   os: Row[];
   devices: Row[];
-  recent: { id: number; clickedAt: string; referrer: string; browser: string; os: string; device: string }[];
+  recent: { id: string; clickedAt: string; referrer: string; browser: string; os: string; device: string }[];
 };
 
 function StatCard({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string | number }) {

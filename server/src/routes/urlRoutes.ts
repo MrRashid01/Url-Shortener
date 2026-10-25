@@ -251,7 +251,7 @@ router.get("/:id/stats", requireAuth, async (req, res) => {
     browsers,
     os,
     devices,
-    recent,
+    recent: recent.map((c) => ({ ...c, id: c.id.toString() })),
   });
 });
 

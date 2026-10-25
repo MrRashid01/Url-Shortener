@@ -33,7 +33,7 @@ model Url {
 }
 
 model Click {
-  id        Int      @id @default(autoincrement())
+  id        BigInt   @id          // Snowflake id made by the server
   urlId     Int
   url       Url      @relation(fields: [urlId], references: [id], onDelete: Cascade)
   clickedAt DateTime @default(now())

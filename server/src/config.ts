@@ -10,6 +10,12 @@ const schema = z.object({
   CLIENT_URL: z.string().min(1, "CLIENT_URL is required"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   CROSS_SITE_COOKIES: z.enum(["true", "false"]).default("false"),
+  REDIRECT_STATUS: z.coerce
+    .number()
+    .refine((n) => [301, 302, 307, 308].includes(n), "REDIRECT_STATUS must be 301, 302, 307 or 308")
+    .default(302),
+  REDIRECT_BROWSER_CACHE_SECONDS: z.coerce.number().int().min(0).default(0),
+  REDIRECT_CDN_CACHE_SECONDS: z.coerce.number().int().min(0).default(0),
 });
 
 const parsed = schema.safeParse(process.env);

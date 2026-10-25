@@ -1,5 +1,5 @@
 import UAParser from "ua-parser-js";
-import { prisma } from "../lib/prisma";
+import { enqueueClick } from "../lib/clickQueue";
 
 const BOT_RE = /bot|crawler|spider|slurp|preview|facebookexternalhit|headless|monitor/i;
 
@@ -17,25 +17,15 @@ function parseReferrer(referer?: string): string {
   }
 }
 
-// Fire-and-forget: the caller does NOT await this
+// Fire-and-forget: the redirect does NOT wait for this
 export function recordClick(urlId: number, userAgent: string, referer?: string) {
   const ua = new UAParser(userAgent).getResult();
 
-  prisma
-    .$transaction([
-      prisma.click.create({
-        data: {
-          urlId,
-          referrer: parseReferrer(referer),
-          browser: ua.browser.name ?? "Unknown",
-          os: ua.os.name ?? "Unknown",
-          device: ua.device.type ?? "desktop", // parser returns nothing for desktops
-        },
-      }),
-      prisma.url.update({
-        where: { id: urlId },
-        data: { clicks: { increment: 1 } },
-      }),
-    ])
-    .catch((err) => console.error("Analytics failed:", err));
+  void enqueueClick({
+    urlId,
+    referrer: parseReferrer(referer),
+    browser: ua.browser.name ?? "Unknown",
+    os: ua.os.name ?? "Unknown",
+    device: ua.device.type ?? "desktop",
+  });
 }

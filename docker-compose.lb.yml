@@ -21,7 +21,7 @@ services:
     image: redis:7-alpine
     container_name: urlshortener-redis
     restart: unless-stopped
-    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru"]
     ports:
       - "6379:6379"
     healthcheck:
@@ -48,6 +48,8 @@ services:
       BASE_URL: http://localhost:8000
       CLIENT_URL: http://localhost:8080
       CROSS_SITE_COOKIES: "false"
+      REDIRECT_STATUS: ${REDIRECT_STATUS:-302}
+      REDIRECT_CDN_CACHE_SECONDS: ${REDIRECT_CDN_CACHE_SECONDS:-0}
     expose:
       - "5000"
     healthcheck:
@@ -62,7 +64,8 @@ services:
     container_name: urlshortener-lb
     restart: unless-stopped
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     ports:
       - "8000:80"
     volumes:
